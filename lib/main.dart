@@ -40,8 +40,6 @@ class _SmartPDFFormFillState extends State<SmartPDFFormFill>
   final Map<int, bool> _isCopied = {};
   bool _isButtonEnabled = false;
 
-  bool _isMobileView = false;
-
   /// Boolean to indicate whether the AI service work is in progress
   bool _isBusy = false;
   bool _isDocumentLoaded = false;
@@ -49,6 +47,9 @@ class _SmartPDFFormFillState extends State<SmartPDFFormFill>
   /// To check platform whether it is desktop or not.
   bool kIsDesktop =
       kIsWeb || Platform.isMacOS || Platform.isWindows || Platform.isLinux;
+
+  /// Indicates whether the application is viewed on an mobile view or desktop view.
+  bool _isMobileView = false;
 
   final List<String> _userDetails = [];
   final PdfViewerController _pdfViewerController = PdfViewerController();
@@ -79,11 +80,11 @@ class _SmartPDFFormFillState extends State<SmartPDFFormFill>
         try {
           _initAiServices(apiKey);
         } catch (e) {
-          _showDialog('Error', '${e.runtimeType}');
+          _showDialog('Error', e.toString());
         }
       }
     });
-    _initUserDetail();
+    _initUserDetails();
   }
 
   @override
@@ -109,7 +110,7 @@ class _SmartPDFFormFillState extends State<SmartPDFFormFill>
 
       _chat = _model.startChat();
     } catch (e) {
-      _showDialog('Error', 'Pleae');
+      _showDialog('Error', 'Failed to initialize AI services: ${e.toString()}');
     }
   }
 
@@ -130,10 +131,12 @@ class _SmartPDFFormFillState extends State<SmartPDFFormFill>
       setState(() {
         _isBusy = false;
       });
+      _showDialog('Error', e.toString());
     }
   }
 
-  void _initUserDetail() {
+  /// Initialize sample user details
+  void _initUserDetails() {
     _userDetails.add(
         'Hi, this is John. You can contact me at john123@emailid.com. I am male, born on February 20, 2005. I want to subscribe to a newspaper and learn courses, specifically a Machine Learning course. I am from Alaska.');
     _userDetails.add(
@@ -142,21 +145,95 @@ class _SmartPDFFormFillState extends State<SmartPDFFormFill>
         'Hi, this is Alice. You can contact me at alice456@emailid.com. I am female, born on July 15, 1998. I want to unsubscribe from a newspaper and learn courses, specifically a Cloud Computing course. I am from Texas.');
   }
 
+  /// Send message to the AI service
   Future<String?> _sendMessage(String message) async {
     try {
       final GenerateContentResponse response =
           await _chat.sendMessage(Content.text(message));
       return response.text;
     } catch (e) {
+      _showDialog('Error', e.toString());
       return null;
     }
   }
 
+  /// Set the copied content to the clipboard
   Future<void> _copyToClipboard(String text) async {
     await Clipboard.setData(ClipboardData(text: text));
   }
 
-  String _getOfflineResponse(String data) {
+  /// Execute smart fill based on the API key.
+  Future<void> _smartFill() async {
+    try {
+      final ClipboardData? clipboardData = await _getClipboardContent();
+      if (!_validateClipboardContent(clipboardData)) return;
+      setState(() {
+        _isBusy = true;
+      });
+
+      final String copiedTextContent = clipboardData!.text!;
+      await _processSmartFillRequest(copiedTextContent);
+    } catch (e) {
+      _showDialog('Error', e.toString());
+      setState(() {
+        _isBusy = false;
+      });
+    }
+  }
+
+  /// Get the content from the clipboard.
+  Future<ClipboardData?> _getClipboardContent() async {
+    return await Clipboard.getData('text/plain');
+  }
+
+  /// Validate the clipboard content.
+  bool _validateClipboardContent(ClipboardData? clipboardData) {
+    return clipboardData != null && clipboardData.text != null;
+  }
+
+  /// Process the request based in the availability of the API key.
+  /// If no API key is provided, the request will be processed offline with the predefined data.
+  /// If API key is provided, the request will be provessed by the AI service.
+  Future<void> _processSmartFillRequest(String copiedTextContent) async {
+    String? response;
+    if (apiKey.isNotEmpty && apiKey != 'API KEY') {
+      response = await _processWithAI(copiedTextContent);
+    } else {
+      response = _processWithOfflineData(copiedTextContent);
+    }
+
+    if (response != null && response.isNotEmpty) {
+      _fillPDF(response);
+    } else {
+      setState(() {
+        _isBusy = false;
+      });
+    }
+  }
+
+  /// To process the request using AI service.
+  Future<String?> _processWithAI(String copiedTextContent) async {
+    final String customValues = _getHintText();
+    final String exportedFormData = _getXFDFString();
+
+    final String prompt = '''
+    Merge the copied text content into the XFDF file content. Hint text: $customValues.
+    Ensure the copied text content matches the appropriate field names.
+    Here are the details:
+    Copied text content: $copiedTextContent,
+    XFDF information: $exportedFormData.
+    Provide the resultant XFDF directly.
+    Please follow these conditions:
+    1. The input data is not directly provided as the field name; you need to think and merge appropriately.
+    2. When comparing input data and field names, ignore case sensitivity.
+    3. First, determine the best match for the field name. If there isn't an exact match, use the input data to find a close match.
+    4. Remove the xml code tags if they are present in the first and last lines of the code.''';
+
+    return await _sendMessage(prompt);
+  }
+
+  /// To get the predefiend responses when no API key is provided
+  String _processWithOfflineData(String data) {
     String response = '';
     if (data.compareTo(_userDetails[0]) == 0) {
       response = '''
@@ -253,63 +330,7 @@ class _SmartPDFFormFillState extends State<SmartPDFFormFill>
     return response;
   }
 
-  Future<void> _smartFill() async {
-    try {
-      final ClipboardData? clipboardData =
-          await Clipboard.getData('text/plain');
-
-      if (clipboardData == null || clipboardData.text == null) {
-        return;
-      }
-
-      setState(() {
-        _isBusy = true;
-      });
-
-      final String copiedTextContent = clipboardData.text!;
-      String? response;
-      if (apiKey.isNotEmpty && apiKey != 'API KEY') {
-        final String customValues = _getHintText();
-        final String exportedFormData = _getXFDFString();
-
-        final String prompt = '''
-          Merge the copied text content into the XFDF file content. Hint text: $customValues.
-          Ensure the copied text content matches the appropriate field names.
-          Here are the details:
-          Copied text content: $copiedTextContent,
-          XFDF information: $exportedFormData.
-          Provide the resultant XFDF directly.
-          Please follow these conditions:
-          1. The input data is not directly provided as the field name; you need to think and merge appropriately.
-          2. When comparing input data and field names, ignore case sensitivity.
-          3. First, determine the best match for the field name. If there isn't an exact match, use the input data to find a close match.
-          4. Remove the xml code tags if they are present in the first and last lines of the code.''';
-
-        response = await _sendMessage(prompt);
-
-        if (response == null) {
-          setState(() {
-            _isBusy = false;
-          });
-          return;
-        }
-      } else {
-        response = _getOfflineResponse(copiedTextContent);
-      }
-      if (response.isNotEmpty) {
-        _fillPDF(response);
-      } else {
-        setState(() {
-          _isBusy = false;
-        });
-      }
-    } catch (e) {
-      setState(() {
-        _isBusy = false;
-      });
-    }
-  }
-
+  /// Fill the PDF form by importing the xfdf content
   Future<void> _fillPDF(String xfdfString) async {
     const utf8 = Utf8Codec();
     final List<int> xfdfBytes = utf8.encode(xfdfString);
@@ -319,6 +340,7 @@ class _SmartPDFFormFillState extends State<SmartPDFFormFill>
     });
   }
 
+  /// Converts the form data to String.
   String _getXFDFString() {
     final List<int> xfdfBytes =
         _pdfViewerController.exportFormData(dataFormat: DataFormat.xfdf);
@@ -327,6 +349,7 @@ class _SmartPDFFormFillState extends State<SmartPDFFormFill>
     return xfdfString;
   }
 
+  /// Get the options available for the combo box, radio button and list box fields.
   String _getHintText() {
     final List<PdfFormField> fields = _pdfViewerController.getFormFields();
 
@@ -371,7 +394,7 @@ class _SmartPDFFormFillState extends State<SmartPDFFormFill>
     return hintData;
   }
 
-  /// Save document
+  /// Save the document locally
   Future<void> _saveDocument(
       List<int> dataBytes, String message, String fileName) async {
     if (kIsWeb) {
@@ -393,7 +416,8 @@ class _SmartPDFFormFillState extends State<SmartPDFFormFill>
     }
   }
 
-  /// Alert dialog for save and export
+  /// Show Alert dialog with Title and message.
+  /// Used for save and for any error messages.
   void _showDialog(String title, String message) {
     showDialog<Widget>(
         context: context,
@@ -434,6 +458,7 @@ class _SmartPDFFormFillState extends State<SmartPDFFormFill>
         });
   }
 
+  /// To save the PDF document
   Future<void> _saveDocumentHandler() async {
     final List<int> savedBytes = await _pdfViewerController.saveDocument();
     _saveDocument(
@@ -565,6 +590,7 @@ class _SmartPDFFormFillState extends State<SmartPDFFormFill>
       );
     }
 
+    /// Build the AppBar
     AppBar appBar() {
       return AppBar(
         automaticallyImplyLeading: false,
@@ -663,10 +689,9 @@ class _SmartPDFFormFillState extends State<SmartPDFFormFill>
                     color: themeData.colorScheme.outlineVariant,
                     width: 1.0,
                   ),
+                  // Display the list panel next to PDF viewer on larger screens.
                   SizedBox(
-                    // Display the list panel next to PDF viewer on larger screens.
                     width: listWidth,
-                    // height: MediaQuery.of(context).size.height,
                     child: Column(
                       mainAxisAlignment: MainAxisAlignment.spaceAround,
                       children: [
@@ -711,6 +736,7 @@ class _SmartPDFFormFillState extends State<SmartPDFFormFill>
           );
   }
 
+  /// Build the Smart fill button with animation
   Widget _buildSmartFillButton(ThemeData themeData) {
     return Tooltip(
       message: _isButtonEnabled ? 'Click to smart fill the form' : '',
