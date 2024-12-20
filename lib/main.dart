@@ -5,7 +5,6 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:google_generative_ai/google_generative_ai.dart';
-import 'package:path_provider/path_provider.dart';
 import 'package:syncfusion_flutter_pdf/pdf.dart';
 import 'package:syncfusion_flutter_pdfviewer/pdfviewer.dart';
 
@@ -395,24 +394,21 @@ class _SmartPDFFormFillState extends State<SmartPDFFormFill>
   }
 
   /// Save the document locally
-  Future<void> _saveDocument(
-      List<int> dataBytes, String message, String fileName) async {
-    if (kIsWeb) {
-      await FileSaveHelper.saveFile(dataBytes, fileName);
-    } else {
-      final Directory directory = await getApplicationSupportDirectory();
-      final String path = directory.path;
-      final File file = File('$path/$fileName');
-      try {
-        await file.writeAsBytes(dataBytes);
+  Future<void> _saveDocument(List<int> dataBytes, String fileName) async {
+    try {
+      final path = await FileSaveHelper.saveFile(dataBytes, fileName);
+      if (kIsWeb) {
         _showDialog('Document saved',
-            message + path + Platform.pathSeparator + fileName);
-      } on PathAccessException catch (e) {
+            'The document was saved in the Downloads folder.');
+      } else {
         _showDialog(
-            'Error', e.osError?.message ?? 'Error in saving the document');
-      } catch (e) {
-        _showDialog('Error', 'Error in saving the document');
+            'Document saved', 'The document was saved at the location:\n$path');
       }
+    } on PathAccessException catch (e) {
+      _showDialog(
+          'Error', e.osError?.message ?? 'Error in saving the document');
+    } catch (e) {
+      _showDialog('Error', 'Error in saving the document');
     }
   }
 
@@ -461,8 +457,7 @@ class _SmartPDFFormFillState extends State<SmartPDFFormFill>
   /// To save the PDF document
   Future<void> _saveDocumentHandler() async {
     final List<int> savedBytes = await _pdfViewerController.saveDocument();
-    _saveDocument(
-        savedBytes, 'The document was saved at the location ', 'form.pdf');
+    _saveDocument(savedBytes, 'form.pdf');
   }
 
   @override
