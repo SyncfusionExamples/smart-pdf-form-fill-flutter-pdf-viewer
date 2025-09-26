@@ -17,3 +17,6 @@ The smart PDF form filling process leverages advanced AI models to interpret and
 ```dart
 String apiKey = 'API KEY';
 ```
+
+## Blog reference
+[Flutter Developers, Meet AI: Smart, Fast PDF Form Filling](https://www.syncfusion.com/blogs/post/smart-pdf-form-filling-in-flutter-app)
